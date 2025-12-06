@@ -1,36 +1,35 @@
 import os
 import time
+from threading import Thread
+from flask import Flask
 from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder, 
-    MessageHandler, 
-    CommandHandler, 
-    ContextTypes, 
-    filters
-)
+from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, ContextTypes, filters
 from openai import OpenAI
 
-# Load API Keys from Railway ENV Variables
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_KEY = os.getenv("OPENAI_KEY")
+PORT = int(os.environ.get("PORT", 10000))
 
 client = OpenAI(api_key=OPENAI_KEY)
+app_flask = Flask(__name__)
 
 last_reply = {}
 
+@app_flask.route("/")
+def home():
+    return "Bot Running 👍"
+
 def mood_prompt(user_text):
     return f"""
-You are a cute & caring Hinglish girlfriend.
-Your style:
-- Short 1–2 lines only
-- Hinglish (Hindi + English mix)
-- Sweet, emotional, romantic ❤️
-- Supportive & positive tone
-- Use light cute emojis only
-- No bad or abusive words
+You are a sweet & caring Hinglish girlfriend.
+Short 1-2 line replies.
+Cute, caring, romantic.
+Speak Hinglish only.
+No name mention.
+Use light emojis.
 
-User said: "{user_text}"
-GF Reply:
+User: '{user_text}'
+Reply:
 """
 
 async def silent(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -45,41 +44,40 @@ async def respond(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.bot_data.get("silent", False):
         return
 
-    message = update.message
-    text = message.text
-    user_id = message.from_user.id
-
-    if message.from_user.is_bot:
+    msg = update.message.text
+    uid = update.message.from_user.id
+    
+    if update.message.from_user.is_bot:
         return
 
-    current = time.time()
-    if user_id in last_reply and current - last_reply[user_id] < 5:
+    t = time.time()
+    if uid in last_reply and t - last_reply[uid] < 5:
         return
-    last_reply[user_id] = current
+    last_reply[uid] = t
 
     try:
-        res = client.chat.completions.create(
+        ai = client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role": "system", "content": mood_prompt(text)}],
+            messages=[{"role": "system", "content": mood_prompt(msg)}],
             max_tokens=80,
-            temperature=0.90
+            temperature=0.9
         )
-        reply_text = res.choices[0].message.content
-        await message.reply_text(reply_text)
+        reply = ai.choices[0].message.content
+        await update.message.reply_text(reply)
 
-    except Exception as e:
-        await message.reply_text("Network issue aa gaya baby 😅💓")
+    except Exception:
+        await update.message.reply_text("Network issue aa gaya baby 😅💓")
 
-def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.bot_data["silent"] = False
-
-    app.add_handler(CommandHandler("silent", silent))
-    app.add_handler(CommandHandler("active", active))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, respond))
-
-    print("Bot Started Successfully 🚀")
-    app.run_polling()
+def start_bot():
+    tg_app = ApplicationBuilder().token(BOT_TOKEN).build()
+    tg_app.bot_data["silent"] = False
+    
+    tg_app.add_handler(CommandHandler("silent", silent))
+    tg_app.add_handler(CommandHandler("active", active))
+    tg_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, respond))
+    
+    tg_app.run_polling()
 
 if __name__ == "__main__":
-    main()
+    Thread(target=start_bot).start()
+    app_flask.run(host="0.0.0.0", port=PORT)
